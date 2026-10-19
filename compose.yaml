@@ -1,0 +1,16 @@
+services:
+  whoami:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      TENANT_ID: ${TENANT_ID:?export TENANT_ID=$(az account show --query tenantId -o tsv)}
+      # For this local test the audience is the Azure Resource Manager, because az can mint that token
+      # without an app registration. For a real deployment use your own API (App ID URI).
+      AUDIENCES: ${AUDIENCES:-https://management.azure.com,https://management.azure.com/}
+      MASK_IDENTIFIERS: ${MASK_IDENTIFIERS:-true}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
