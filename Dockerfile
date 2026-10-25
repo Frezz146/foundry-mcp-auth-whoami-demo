@@ -8,7 +8,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY --chmod=0644 server.py ./
+COPY server.py ./
+# Not COPY --chmod: ACR Tasks builds without BuildKit. Files from some hosts arrive as 0600.
+RUN chmod 0644 server.py
 RUN useradd --system --no-create-home app
 USER app
 
