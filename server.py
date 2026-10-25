@@ -41,6 +41,7 @@ class Settings:
     mask_identifiers: bool = True
     jwks_uri: str | None = None
     allowed_hosts: list[str] = field(default_factory=list)
+    required_role: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,6 +56,7 @@ class Settings:
             mask_identifiers=os.environ.get("MASK_IDENTIFIERS", "true").lower() != "false",
             jwks_uri=os.environ.get("JWKS_URI") or None,
             allowed_hosts=[h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()],
+            required_role=os.environ.get("REQUIRED_ROLE", "").strip() or None,
         )
 
 
@@ -166,6 +168,9 @@ def create_app(settings: Settings | None = None, verifier: EntraTokenVerifier | 
             resource_server_url=settings.public_url,
             # The verifier already checks the audience, so skip the RFC 8707 resource check.
             validate_token_resource=False,
+            # Optional: a valid token is not enough, it must also carry this app role (or scope).
+            # Without it the SDK answers 403 insufficient_scope.
+            required_scopes=[settings.required_role] if settings.required_role else None,
         ),
         token_verifier=verifier,
     )

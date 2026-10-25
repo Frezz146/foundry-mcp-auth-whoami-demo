@@ -53,6 +53,7 @@ expired, wrong audience, wrong tenant and wrongly signed tokens, plus the user a
 | `PUBLIC_URL` | URL of the MCP endpoint | `http://localhost:8000/mcp` |
 | `MASK_IDENTIFIERS` | Mask ids and user names in the answer | `true` |
 | `ALLOWED_HOSTS` | Host headers to allow when it runs behind a real host name | localhost only |
+| `REQUIRED_ROLE` | App role (or scope) a valid token must also carry, otherwise `403` | off |
 | `JWKS_URI` | Override the key endpoint, for tests | tenant default |
 
 ## Read this before you reuse it

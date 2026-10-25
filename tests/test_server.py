@@ -29,8 +29,8 @@ class FakeJwks:
         return SimpleNamespace(key=self._public)
 
 
-def make_client(key, mask=True):
-    settings = Settings(tenant_id=TENANT, audiences=[AUDIENCE], mask_identifiers=mask)
+def make_client(key, mask=True, required_role=None):
+    settings = Settings(tenant_id=TENANT, audiences=[AUDIENCE], mask_identifiers=mask, required_role=required_role)
     verifier = EntraTokenVerifier(settings, jwks_client=FakeJwks(key))
     return TestClient(create_app(settings, verifier), base_url="http://localhost:8000")
 
@@ -119,6 +119,19 @@ def test_app_token_is_seen_as_application(key):
         body = payload(call_whoami(client, token(key, **APP)))
     assert body["callerType"] == "application"
     assert "userName" not in body
+    assert body["appRoles"] == ["Tools.Run"]
+
+
+def test_required_role_missing_is_forbidden(key):
+    with make_client(key, required_role="Tools.Run") as client:
+        response = call_whoami(client, token(key, idtyp="app"))
+    assert response.status_code == 403
+    assert "insufficient_scope" in response.text
+
+
+def test_required_role_present_is_allowed(key):
+    with make_client(key, required_role="Tools.Run") as client:
+        body = payload(call_whoami(client, token(key, **APP)))
     assert body["appRoles"] == ["Tools.Run"]
 
 
