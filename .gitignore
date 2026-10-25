@@ -4,3 +4,9 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+
+# Azure test state and local notes
+deploy/.state.env
+deploy/.state.tmp
+deploy/.app-roles.json
+*.local.md
