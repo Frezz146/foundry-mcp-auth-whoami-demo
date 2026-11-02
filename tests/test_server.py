@@ -1,6 +1,7 @@
 """Tests with locally signed tokens, so they need no tenant and no network."""
 
 import json
+import logging
 import time
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from server import EntraTokenVerifier, Settings, create_app, describe_caller
+from server import EntraTokenVerifier, Settings, audit_line, create_app, describe_caller
 
 TENANT = "11111111-2222-3333-4444-555555555555"
 AUDIENCE = "api://whoami-demo"
@@ -212,3 +213,29 @@ def test_masking_hides_guids_in_issuer_and_audience():
     assert TENANT not in text
     assert OBJECT_ID not in text
     assert "https://sts.windows.net/11111111.../" in text
+
+
+def test_tool_call_is_audited_without_token_or_name(key, caplog):
+    audit = logging.getLogger("whoami.audit")
+    audit.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="whoami.audit")
+    bearer = token(key, **USER)
+    try:
+        with make_client(key) as client:
+            call_whoami(client, bearer)
+    finally:
+        audit.removeHandler(caplog.handler)
+    text = caplog.text
+    assert text.count("whoami called") == 1
+    assert "callerType=user" in text
+    assert "objectId=aaaaaaaa..." in text
+    assert "scopes=access_as_user" in text
+    assert bearer not in text
+    assert "jane" not in text
+
+
+def test_audit_line_shows_roles_for_workloads():
+    line = audit_line({"exp": 1, "oid": OBJECT_ID, "roles": ["Tools.Run"]})
+    assert "callerType=application" in line
+    assert "roles=Tools.Run" in line
+    assert "scopes=-" in line

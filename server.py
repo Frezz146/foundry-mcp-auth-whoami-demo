@@ -14,6 +14,7 @@ issuer, audience and expiry. It never logs or returns the token itself.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -101,6 +102,15 @@ class EntraTokenVerifier:
         )
 
 
+audit_log = logging.getLogger("whoami.audit")
+audit_log.setLevel(logging.INFO)
+# Own handler only: the MCP SDK sets up a root handler, so without this each line would appear twice.
+audit_log.propagate = False
+if not audit_log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+    audit_log.addHandler(_handler)
+
 _GUID = re.compile(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}")
 
 
@@ -156,6 +166,17 @@ def describe_caller(claims: dict[str, Any], mask: bool = True) -> dict[str, Any]
     return {k: v for k, v in result.items() if v is not None}
 
 
+def audit_line(claims: dict[str, Any]) -> str:
+    """One log line per tool call: who called, with which scope or role. Always masked, never the token."""
+    caller = describe_caller(claims, mask=True)
+    scopes = ",".join(caller.get("delegatedScopes", [])) or "-"
+    roles = ",".join(caller.get("appRoles", [])) or "-"
+    return (
+        f"whoami called callerType={caller['callerType']} objectId={caller.get('objectId', '-')} "
+        f"clientApp={caller.get('clientApp', '-')} scopes={scopes} roles={roles}"
+    )
+
+
 def create_app(settings: Settings | None = None, verifier: EntraTokenVerifier | None = None) -> Starlette:
     settings = settings or Settings.from_env()
     verifier = verifier or EntraTokenVerifier(settings)
@@ -179,6 +200,8 @@ def create_app(settings: Settings | None = None, verifier: EntraTokenVerifier | 
     def whoami() -> dict[str, Any]:
         """Tell the caller which identity this server sees in the bearer token."""
         access = get_access_token()
+        if access:
+            audit_log.info(audit_line(access.claims or {}))
         return describe_caller(access.claims or {}, mask=settings.mask_identifiers) if access else {}
 
     security = (
