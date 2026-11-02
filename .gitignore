@@ -10,3 +10,4 @@ deploy/.state.env
 deploy/.state.tmp
 deploy/.app-roles.json
 *.local.md
+deploy/.scope.json
