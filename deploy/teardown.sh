@@ -8,8 +8,8 @@
 #                                 resource (implies --wait), so the names can be used again
 #
 # It deletes: the resource group (container app, environment, registry, log workspace),
-# the Entra app registration of the API (its service principal and role assignments go with it)
-# and the local state files. The Foundry resource, its project, the connections and the test agent live
+# the Entra app registrations of the API and of the OAuth client (service principals, role assignments and
+# consent grants go with them) and the local state files. The Foundry resource, its project, the connections and the test agent live
 # in the resource group and go away with it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -52,12 +52,17 @@ else
 fi
 echo
 
-APP_IDS=$(az ad app list --display-name "$API_APP_NAME" --query "[].appId" -o tsv)
-if [ -n "$APP_IDS" ]; then
-  echo "App registration(s) named $API_APP_NAME will be deleted: $(echo "$APP_IDS" | wc -l | tr -d ' ') found."
-else
-  echo "No app registration named $API_APP_NAME (nothing to delete there)."
-fi
+APP_IDS=""
+for NAME in "$API_APP_NAME" "${CLIENT_APP_NAME:-}"; do
+  [ -z "$NAME" ] && continue
+  FOUND=$(az ad app list --display-name "$NAME" --query "[].appId" -o tsv)
+  if [ -n "$FOUND" ]; then
+    echo "App registration(s) named $NAME will be deleted: $(echo "$FOUND" | wc -w | tr -d ' ') found."
+    APP_IDS="$APP_IDS $FOUND"
+  else
+    echo "No app registration named $NAME (nothing to delete there)."
+  fi
+done
 echo
 
 # 2. Ask
@@ -97,13 +102,16 @@ if [ "$PURGE" = "true" ] && [ "$RG_EXISTS" = "true" ]; then
 fi
 
 # 5. Local files
-rm -f deploy/.state.env deploy/.state.tmp deploy/.app-roles.json
+rm -f deploy/.state.env deploy/.state.tmp deploy/.app-roles.json deploy/.scope.json
 
 # 6. Check
 echo
 echo "Check:"
 echo "  resource group exists: $(az group exists --name "$RG") (true can be fine for a few minutes without --wait)"
-echo "  app registrations left: $(az ad app list --display-name "$API_APP_NAME" --query 'length(@)' -o tsv)"
+for NAME in "$API_APP_NAME" "${CLIENT_APP_NAME:-}"; do
+  [ -z "$NAME" ] && continue
+  echo "  app registrations left named $NAME: $(az ad app list --display-name "$NAME" --query 'length(@)' -o tsv)"
+done
 echo
 echo "The Foundry resource, project, connections and test agent were part of the resource group."
-echo "The role assignment of the Foundry identity went away together with the app registration."
+echo "The role assignment of the Foundry identity and the consent grants went away together with the app registrations."

@@ -19,6 +19,10 @@ export APP="frezz-we-ca-mcpwhoami-dev"
 export API_APP_NAME="frezz-we-app-mcpwhoami-api-dev"
 export ROLE_VALUE="Mcp.Tools.ReadWrite.All"
 export CONN_NAME="whoami-mcp"
+# OAuth identity passthrough (post 3)
+export CLIENT_APP_NAME="frezz-we-app-mcpwhoami-client-dev"
+export SCOPE_VALUE="Mcp.Tools.Access"
+export CONN_NAME_OAUTH="whoami-mcp-oauth"
 export RG_TAG="foundry-mcp-whoami-demo"
 
 # Values found along the way (ids, host names) live in deploy/.state.env, which git ignores.
