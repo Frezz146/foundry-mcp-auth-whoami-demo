@@ -30,8 +30,14 @@ class FakeJwks:
         return SimpleNamespace(key=self._public)
 
 
-def make_client(key, mask=True, required_role=None):
-    settings = Settings(tenant_id=TENANT, audiences=[AUDIENCE], mask_identifiers=mask, required_role=required_role)
+def make_client(key, mask=True, required_role=None, audit_header_values=None):
+    settings = Settings(
+        tenant_id=TENANT,
+        audiences=[AUDIENCE],
+        mask_identifiers=mask,
+        required_role=required_role,
+        audit_header_values=audit_header_values or [],
+    )
     verifier = EntraTokenVerifier(settings, jwks_client=FakeJwks(key))
     return TestClient(create_app(settings, verifier), base_url="http://localhost:8000")
 
@@ -239,3 +245,108 @@ def test_audit_line_shows_roles_for_workloads():
     assert "callerType=application" in line
     assert "roles=Tools.Run" in line
     assert "scopes=-" in line
+
+
+def test_audit_line_lists_header_names_and_only_allowed_values():
+    headers = {
+        "Authorization": "Bearer secret-token",
+        "X-Correlation-Id": "corr-123",
+        "X-Other-Secret": "hunter2",
+    }
+    line = audit_line({"exp": 1, "oid": OBJECT_ID, "scp": "Mcp.Tools.Access"}, headers)
+    assert "headers=authorization,x-correlation-id,x-other-secret" in line
+    assert "correlationId=corr-123" in line
+    assert "secret-token" not in line
+    assert "hunter2" not in line
+
+
+def test_audit_line_without_headers_stays_as_before():
+    line = audit_line({"exp": 1, "oid": OBJECT_ID, "scp": "Mcp.Tools.Access"})
+    assert "headers=-" in line
+    assert "correlationId=-" in line
+
+
+def test_tool_call_audit_line_shows_request_headers_without_values(key, caplog):
+    audit = logging.getLogger("whoami.audit")
+    audit.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="whoami.audit")
+    bearer = token(key, **USER)
+    try:
+        with make_client(key) as client:
+            headers = dict(HEADERS)
+            headers["Authorization"] = f"Bearer {bearer}"
+            headers["X-Correlation-Id"] = "corr-123"
+            headers["X-Other-Secret"] = "hunter2"
+            client.post("/mcp", headers=headers, content=json.dumps(CALL))
+    finally:
+        audit.removeHandler(caplog.handler)
+    text = caplog.text
+    assert "x-correlation-id" in text
+    assert "x-other-secret" in text
+    assert "correlationId=corr-123" in text
+    assert "hunter2" not in text
+    assert bearer not in text
+
+
+def test_audit_line_keeps_a_forged_correlation_id_on_one_line():
+    line = audit_line({"exp": 1, "oid": OBJECT_ID}, {"X-Correlation-Id": "a\nwhoami called callerType=user"})
+    assert "\n" not in line
+    assert line.count("whoami called") == 1
+
+
+def test_audit_line_shows_values_only_for_listed_headers():
+    headers = {"X-Ms-Foundry-Baggage": "agent=a1,project=p1", "X-Other": "hidden"}
+    line = audit_line({"exp": 1, "oid": OBJECT_ID}, headers, value_headers=["x-ms-foundry-baggage"])
+    assert 'headerValues={"x-ms-foundry-baggage": "agent=a1,project=p1"}' in line
+    assert "hidden" not in line
+
+
+def test_audit_line_never_shows_credentials_even_when_listed():
+    headers = {"Authorization": "Bearer secret-token", "Cookie": "session=abc"}
+    line = audit_line({"exp": 1, "oid": OBJECT_ID}, headers, value_headers=["authorization", "cookie"])
+    assert "secret-token" not in line
+    assert "session=abc" not in line
+
+
+def test_audit_line_header_values_stay_on_one_line_and_are_cut():
+    headers = {"Baggage": "a\nwhoami called callerType=user" + "x" * 2000}
+    line = audit_line({"exp": 1, "oid": OBJECT_ID}, headers, value_headers=["baggage"])
+    assert len(line.splitlines()) == 1
+    assert "x" * 1001 not in line
+    assert "x" * 900 in line
+
+
+def test_audit_line_without_value_headers_has_no_values_field():
+    line = audit_line({"exp": 1, "oid": OBJECT_ID}, {"Baggage": "x"})
+    assert "headerValues" not in line
+
+
+def test_listed_header_that_is_missing_is_not_shown():
+    line = audit_line({"exp": 1, "oid": OBJECT_ID}, {}, value_headers=["baggage"])
+    assert "headerValues" not in line
+
+
+def test_settings_read_audit_header_values_from_env(monkeypatch):
+    monkeypatch.setenv("TENANT_ID", TENANT)
+    monkeypatch.setenv("AUDIENCES", AUDIENCE)
+    monkeypatch.setenv("AUDIT_HEADER_VALUES", "Baggage, X-Ms-Foundry-Baggage")
+    assert Settings.from_env().audit_header_values == ["baggage", "x-ms-foundry-baggage"]
+
+
+def test_tool_call_logs_values_of_configured_headers(key, caplog):
+    audit = logging.getLogger("whoami.audit")
+    audit.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="whoami.audit")
+    bearer = token(key, **USER)
+    try:
+        with make_client(key, audit_header_values=["x-test-agent"]) as client:
+            headers = dict(HEADERS)
+            headers["Authorization"] = f"Bearer {bearer}"
+            headers["X-Test-Agent"] = "agent-one"
+            headers["X-Other-Secret"] = "hunter2"
+            client.post("/mcp", headers=headers, content=json.dumps(CALL))
+    finally:
+        audit.removeHandler(caplog.handler)
+    assert "agent-one" in caplog.text
+    assert "hunter2" not in caplog.text
+    assert bearer not in caplog.text

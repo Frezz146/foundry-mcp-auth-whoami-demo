@@ -14,9 +14,11 @@ issuer, audience and expiry. It never logs or returns the token itself.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -26,7 +28,7 @@ from jwt import PyJWKClient
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -43,6 +45,8 @@ class Settings:
     jwks_uri: str | None = None
     allowed_hosts: list[str] = field(default_factory=list)
     required_role: str | None = None
+    # Header names whose VALUES appear in the audit line. Off by default, for experiments only.
+    audit_header_values: list[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,6 +62,9 @@ class Settings:
             jwks_uri=os.environ.get("JWKS_URI") or None,
             allowed_hosts=[h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()],
             required_role=os.environ.get("REQUIRED_ROLE", "").strip() or None,
+            audit_header_values=[
+                h.strip().lower() for h in os.environ.get("AUDIT_HEADER_VALUES", "").split(",") if h.strip()
+            ],
         )
 
 
@@ -166,15 +173,42 @@ def describe_caller(claims: dict[str, Any], mask: bool = True) -> dict[str, Any]
     return {k: v for k, v in result.items() if v is not None}
 
 
-def audit_line(claims: dict[str, Any]) -> str:
-    """One log line per tool call: who called, with which scope or role. Always masked, never the token."""
+_UNSAFE = re.compile(r"[^A-Za-z0-9._:-]")
+_NEVER_LOG = {"authorization", "proxy-authorization", "cookie", "set-cookie"}
+_MAX_VALUE = 1000
+
+
+def _clean_value(value: str) -> str:
+    """Single line, printable ASCII only, cut to a fixed length."""
+    return re.sub(r"[^\x20-\x7e]", "_", value)[:_MAX_VALUE]
+
+
+def audit_line(
+    claims: dict[str, Any],
+    headers: Mapping[str, str] | None = None,
+    value_headers: Sequence[str] = (),
+) -> str:
+    """One log line per tool call: who called, with which scope or role. Always masked, never the token.
+
+    The line also lists the NAMES of the request headers, so you can see what a gateway adds. Values stay out,
+    except the correlation id, and that one is cleaned because a client can send anything in a header.
+    """
     caller = describe_caller(claims, mask=True)
     scopes = ",".join(caller.get("delegatedScopes", [])) or "-"
     roles = ",".join(caller.get("appRoles", [])) or "-"
-    return (
+    lowered = {k.lower(): v for k, v in (headers or {}).items()}
+    names = ",".join(sorted(lowered)) or "-"
+    correlation = _UNSAFE.sub("_", lowered.get("x-correlation-id", ""))[:64] or "-"
+    line = (
         f"whoami called callerType={caller['callerType']} objectId={caller.get('objectId', '-')} "
-        f"clientApp={caller.get('clientApp', '-')} scopes={scopes} roles={roles}"
+        f"clientApp={caller.get('clientApp', '-')} scopes={scopes} roles={roles} "
+        f"headers={names} correlationId={correlation}"
     )
+    wanted = [h.lower() for h in value_headers if h.lower() not in _NEVER_LOG]
+    shown = {h: _clean_value(lowered[h]) for h in wanted if h in lowered}
+    if shown:
+        line += f" headerValues={json.dumps(shown)}"
+    return line
 
 
 def create_app(settings: Settings | None = None, verifier: EntraTokenVerifier | None = None) -> Starlette:
@@ -197,11 +231,11 @@ def create_app(settings: Settings | None = None, verifier: EntraTokenVerifier | 
     )
 
     @mcp.tool()
-    def whoami() -> dict[str, Any]:
+    def whoami(ctx: Context) -> dict[str, Any]:
         """Tell the caller which identity this server sees in the bearer token."""
         access = get_access_token()
         if access:
-            audit_log.info(audit_line(access.claims or {}))
+            audit_log.info(audit_line(access.claims or {}, ctx.headers, settings.audit_header_values))
         return describe_caller(access.claims or {}, mask=settings.mask_identifiers) if access else {}
 
     security = (
