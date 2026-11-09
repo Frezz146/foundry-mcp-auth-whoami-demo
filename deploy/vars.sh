@@ -23,6 +23,9 @@ export CONN_NAME="whoami-mcp"
 export CLIENT_APP_NAME="frezz-we-app-mcpwhoami-client-dev"
 export SCOPE_VALUE="Mcp.Tools.Access"
 export CONN_NAME_OAUTH="whoami-mcp-oauth"
+# AI gateway (post 4). The name of the API Management instance must be the one you give in the Foundry portal.
+export APIM_NAME="frezz-we-apim-mcpwhoami-dev"
+export CONN_NAME_GATEWAY="whoami-mcp-gateway"
 export RG_TAG="foundry-mcp-whoami-demo"
 
 # Values found along the way (ids, host names) live in deploy/.state.env, which git ignores.

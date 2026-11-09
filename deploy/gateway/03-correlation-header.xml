@@ -1,0 +1,22 @@
+<!--
+  Adds a correlation ID to every call that goes to the MCP server. The server writes it into its audit line
+  (correlationId=...), so you can match a line in the server log with a row in the APIM logs.
+  Not tested yet.
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-header name="X-Correlation-Id" exists-action="override">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

@@ -1,0 +1,37 @@
+<!--
+  Limit calls per signed in user, not per IP address.
+  The counter key is the object ID (oid) of the user token. validate-jwt runs first, because AsJwt() only
+  parses a token and does not check the signature. Without it a client could invent its own key.
+  Replace __TENANT_ID__ and __API_APP_ID__ before you paste the two elements into the policy of the MCP server
+  in the Azure portal (APIM, MCP Servers, your tool, Policies), after the cors and set-header elements.
+  Tested: the portal accepts this form, the third tool call was answered by the gateway with 429.
+  The limit counts HTTP requests, not tool calls: one whoami call is two POST requests, and a conversation starts
+  with one more pair. An increment-condition on the mcp-method header was NOT verified and is left out.
+  This file is not well formed XML on purpose (double quotes inside the attribute), APIM accepts policy
+  expressions in this form.
+-->
+<policies>
+  <inbound>
+    <base />
+    <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized">
+      <openid-config url="https://login.microsoftonline.com/__TENANT_ID__/v2.0/.well-known/openid-configuration" />
+      <audiences>
+        <audience>api://__API_APP_ID__</audience>
+      </audiences>
+      <issuers>
+        <issuer>https://sts.windows.net/__TENANT_ID__/</issuer>
+        <issuer>https://login.microsoftonline.com/__TENANT_ID__/v2.0</issuer>
+      </issuers>
+    </validate-jwt>
+    <rate-limit-by-key calls="6" renewal-period="60" counter-key="@(context.Request.Headers.GetValueOrDefault("Authorization","").AsJwt()?.Claims.GetValueOrDefault("oid", "none"))" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

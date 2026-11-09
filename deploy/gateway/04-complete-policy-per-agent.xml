@@ -1,0 +1,53 @@
+<!--
+  Complete policy of the MCP server in API Management as it was tested: the cors block that Foundry creates,
+  plus set-header (correlation ID), validate-jwt (Entra token) and rate-limit-by-key.
+  The counter key is the agent name from the x-ms-foundry-baggage header. Foundry sets that header and nobody
+  signs it, so it is good for fairness and cost control but not a security boundary.
+  Replace <TENANT_ID> and <API_APP_ID> before you paste it into the policy editor
+  (APIM, MCP Servers, your tool, Policies).
+  The limit counts HTTP requests. More requests passed than the configured calls, so do not read calls as an
+  exact number of tool calls.
+  The file is not well formed XML on purpose (double quotes inside the attribute), APIM accepts it.
+-->
+<policies>
+	<inbound>
+		<base />
+		<cors allow-credentials="true">
+			<allowed-origins>
+				<origin>@(context.Request.Headers.GetValueOrDefault("Origin") ?? $"https://{context.Request.Url.Host}")</origin>
+			</allowed-origins>
+			<allowed-methods>
+				<method>*</method>
+			</allowed-methods>
+			<allowed-headers>
+				<header>*</header>
+			</allowed-headers>
+			<expose-headers>
+				<header>*</header>
+			</expose-headers>
+		</cors>
+		<set-header name="X-Correlation-Id" exists-action="override">
+			<value>@(context.RequestId.ToString())</value>
+		</set-header>
+		<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized">
+			<openid-config url="https://login.microsoftonline.com/<TENANT_ID>/v2.0/.well-known/openid-configuration" />
+			<audiences>
+				<audience>api://<API_APP_ID></audience>
+			</audiences>
+			<issuers>
+				<issuer>https://sts.windows.net/<TENANT_ID>/</issuer>
+				<issuer>https://login.microsoftonline.com/<TENANT_ID>/v2.0</issuer>
+			</issuers>
+		</validate-jwt>
+		<rate-limit-by-key calls="4" renewal-period="60" counter-key="@{ var b = context.Request.Headers.GetValueOrDefault("x-ms-foundry-baggage", ""); var m = System.Text.RegularExpressions.Regex.Match(b, @"foundry\.caller\.agent\.name=([^,]+)"); return m.Success ? m.Groups[1].Value : "unknown"; }" />
+	</inbound>
+	<backend>
+		<base />
+	</backend>
+	<outbound>
+		<base />
+	</outbound>
+	<on-error>
+		<base />
+	</on-error>
+</policies>

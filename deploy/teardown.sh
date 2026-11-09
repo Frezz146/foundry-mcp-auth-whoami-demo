@@ -5,11 +5,12 @@
 #   deploy/teardown.sh --yes      do not ask
 #   deploy/teardown.sh --wait     wait until the resource group is really gone
 #   deploy/teardown.sh --purge    also empty the Entra recycle bin entry and purge the soft deleted Foundry
-#                                 resource (implies --wait), so the names can be used again
+#                                 resource and API Management instance (implies --wait), so the names can be used again
 #
 # It deletes: the resource group (container app, environment, registry, log workspace),
 # the Entra app registrations of the API and of the OAuth client (service principals, role assignments and
-# consent grants go with them) and the local state files. The Foundry resource, its project, the connections and the test agent live
+# consent grants go with them), the AI gateway (API Management instance, if it sits in the resource group)
+# and the local state files. The Foundry resource, its project, the connections and the test agent live
 # in the resource group and go away with it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -101,6 +102,16 @@ if [ "$PURGE" = "true" ] && [ "$RG_EXISTS" = "true" ]; then
     && echo "Foundry resource purged."
 fi
 
+# 4b. API Management keeps a deleted instance for 48 hours (soft delete) and reserves its name. Purge it.
+if [ "$PURGE" = "true" ] && [ -n "${APIM_NAME:-}" ]; then
+  if az apim deletedservice show --location "$LOCATION" --service-name "$APIM_NAME" >/dev/null 2>&1; then
+    az apim deletedservice purge --location "$LOCATION" --service-name "$APIM_NAME" \
+      && echo "API Management instance purged."
+  else
+    echo "No soft deleted API Management instance named $APIM_NAME."
+  fi
+fi
+
 # 5. Local files
 rm -f deploy/.state.env deploy/.state.tmp deploy/.app-roles.json deploy/.scope.json
 
@@ -113,5 +124,10 @@ for NAME in "$API_APP_NAME" "${CLIENT_APP_NAME:-}"; do
   echo "  app registrations left named $NAME: $(az ad app list --display-name "$NAME" --query 'length(@)' -o tsv)"
 done
 echo
+if [ -n "${APIM_NAME:-}" ]; then
+  echo "  soft deleted API Management named $APIM_NAME: $(az apim deletedservice list --query "[?name=='$APIM_NAME'] | length(@)" -o tsv 2>/dev/null)"
+fi
+echo
 echo "The Foundry resource, project, connections and test agent were part of the resource group."
+echo "Deleting the AI gateway in the Foundry portal does not delete the API Management instance. The resource group does."
 echo "The role assignment of the Foundry identity and the consent grants went away together with the app registrations."
